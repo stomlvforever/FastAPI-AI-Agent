@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # ========================================================================
     mail_username: str = ""
     mail_password: str = ""   # 126 邮箱授权码（非登录密码）
-    mail_from: str = ""
+    mail_from: str = "noreply@example.com"
     mail_port: int = 465
     mail_server: str = "smtp.126.com"
     mail_ssl_tls: bool = True

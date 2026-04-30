@@ -1,0 +1,33 @@
+# ===== Git / IDE =====
+.git/
+.github/
+.gitignore
+.vscode/
+.idea/
+
+# ===== Python =====
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ===== Node / Frontend =====
+frontend/node_modules/
+frontend/dist/
+
+# ===== Runtime / secrets =====
+.env
+uploads/
+
+# ===== Tests / docs =====
+tests/
+docs/
+
+# ===== Local misc =====
+*.log

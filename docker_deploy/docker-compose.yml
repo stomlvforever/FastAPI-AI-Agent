@@ -1,0 +1,125 @@
+# Docker Compose 配置文件
+# 一键启动命令：docker compose -f docker_deploy/docker-compose.yml up --build -d
+# 当前包含 6 个服务：Nginx + React Frontend + FastAPI + PostgreSQL + Redis + Celery
+
+services:
+  # ========== Nginx 反向代理 ==========
+  # 用户请求 → Nginx(80) → Frontend(80) / FastAPI(8000)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"                    # 对外暴露 80 端口
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro  # 挂载自定义配置
+      - uploads:/app/uploads:ro    # 共享上传文件目录（Nginx 直接服务静态文件）
+    depends_on:
+      frontend:
+        condition: service_healthy
+      app:
+        condition: service_healthy  # 等 FastAPI 健康检查通过后再启动
+    restart: unless-stopped
+
+  # ========== React 前端 ==========
+  # 提供博客首页、详情页、编辑页和 /copilot 页面
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker_deploy/frontend.Dockerfile
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/ > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ========== FastAPI 应用服务 ==========
+  app:
+    build:
+      context: ..
+      dockerfile: docker_deploy/Dockerfile
+    # 不对外暴露端口，只通过 Nginx 代理访问
+    expose:
+      - "8000"
+    env_file:
+      - ../.env
+    environment:
+      ENVIRONMENT: prod
+      DB_URL: postgresql+asyncpg://postgres:postgres@db:5432/fastapi_chuxue
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      CORS_ORIGINS: http://localhost,http://127.0.0.1,http://localhost:3000
+    volumes:
+      - uploads:/app/uploads       # 持久化上传文件（容器重启不丢失）
+    depends_on:
+      db:
+        condition: service_healthy  # 等数据库健康检查通过后再启动
+      redis:
+        condition: service_healthy
+    # 健康检查：每 10 秒请求一次 /api/v1/health
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s           # 给 Alembic 迁移留时间
+    restart: unless-stopped
+
+  # ========== PostgreSQL 数据库 ==========
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fastapi_chuxue
+    volumes:
+      - pgdata:/var/lib/postgresql/data  # 数据持久化（最重要！不加这个重启丢数据）
+    # 健康检查：数据库是否接受连接
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ========== Redis 缓存 ==========
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data            # Redis 数据持久化
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ========== Celery 后台任务 ==========
+  celery:
+    build:
+      context: ..
+      dockerfile: docker_deploy/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app.celery_app", "worker", "--loglevel=INFO"]
+    env_file:
+      - ../.env
+    environment:
+      DB_URL: postgresql+asyncpg://postgres:postgres@db:5432/fastapi_chuxue
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ========== 数据卷定义 ==========
+# Docker Volume 确保数据在容器重建后仍然保留
+volumes:
+  pgdata:       # PostgreSQL 数据
+  redisdata:    # Redis 数据
+  uploads:      # 用户上传的文件（头像等）
